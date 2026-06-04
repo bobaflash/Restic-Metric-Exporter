@@ -1,0 +1,5 @@
+repositories:
+  - name: reop1
+    path: sftp://user@server_url:22/repo1
+    secret: top_secret
+
