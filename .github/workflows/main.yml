@@ -1,0 +1,83 @@
+name: Go
+
+on:
+  push:
+    branches: [ "main" ]
+    # Publish semver tags as releases.
+    tags: [ 'v*.*.*' ]
+
+env:
+  # Use docker.io for Docker Hub if empty
+  REGISTRY: ghcr.io
+  # github.repository as <account>/<repo>
+  IMAGE_NAME: ${{ github.repository }}
+    
+jobs:   
+  build:
+    permissions: 
+        contents: write
+        packages: write
+        id-token: write
+    strategy:
+      matrix:
+        name: [restic-metrics-exporter]
+        os: [linux]
+
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: "go.mod"
+
+    - name: Build [linux]
+      if: matrix.os == 'linux'
+      run: |
+        CGO_ENABLED=0 GOOS=$os GOARCH=amd64 go build -o $name cmd/main.go
+        tar -I 'gzip -9' -cf $name-$os-amd64.tar.gz $name
+        rm $name
+        printf "sha256: %s\n" "$(shasum -a 256 $name-$os-amd64.tar.gz)"
+      env:
+          name: ${{ matrix.name }}
+          os: ${{ matrix.os }}
+    
+    - name: Log into registry ${{ env.REGISTRY }}
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload Release Assets [linux]
+      uses: softprops/action-gh-release@v3
+      if: startsWith(github.ref, 'refs/tags/v')
+      with:
+        files: ${{ matrix.name }}-${{ matrix.os }}-amd64.tar.gz
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+    
+    - name: Extract Docker metadata
+      id: meta
+      uses: docker/metadata-action@v6
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=sha
+          type=ref,event=tag
+    
+    - name: Build and push Docker image
+      id: build-and-push
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
